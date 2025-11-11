@@ -291,7 +291,7 @@ resource "aws_lambda_function" "save_metadata" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE = aws_dynamodb_table.sow_documents.name
+      TABLE_NAME = aws_dynamodb_table.sow_documents.name
     }
   }
 
