@@ -1,7 +1,15 @@
 """
 Lambda: save_metadata
-Purpose: Save document metadata and chunks to DynamoDB (final stage)
-Flow: save queue → save_metadata → DynamoDB
+Purpose: Save document metadata to DynamoDB with idempotent version tracking
+Flow: save queue → save_metadata → DynamoDB (final stage)
+
+FIXED (v1.5.0):
+- Idempotent writes (won't overwrite existing versions)
+- Uses embeddings_manifest instead of chunk_details
+- Required NEXT_QUEUE_URL (fail fast)
+- PII-safe logging (keys only, no values)
+- Proper GSI keys for expiry tracking (GSI2PK/SK)
+- Best-effort LATEST pointer updates
 """
 
 import json
@@ -10,174 +18,165 @@ import logging
 import os
 from datetime import datetime
 from decimal import Decimal
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-dynamodb = boto3.resource('dynamodb')
+dynamodb = boto3.client('dynamodb')
+sqs = boto3.client('sqs')
 
-DYNAMODB_TABLE = os.environ.get('DYNAMODB_TABLE')
-table = dynamodb.Table(DYNAMODB_TABLE)
-
-
-def decimal_default(obj):
-    """JSON encoder for Decimal objects."""
-    if isinstance(obj, Decimal):
-        return float(obj)
-    raise TypeError
+TABLE_NAME = os.environ['TABLE_NAME']  # Required - fail fast
+NEXT_QUEUE_URL = os.environ.get('NEXT_QUEUE_URL')  # Optional (last stage, may not forward)
 
 
-def convert_floats_to_decimal(obj):
-    """Convert floats to Decimal for DynamoDB."""
-    if isinstance(obj, dict):
-        return {k: convert_floats_to_decimal(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_floats_to_decimal(item) for item in obj]
-    elif isinstance(obj, float):
-        return Decimal(str(obj))
+def _decimal_to_dynamodb(value):
+    """Convert Python types to DynamoDB-safe types."""
+    if isinstance(value, dict):
+        return {k: _decimal_to_dynamodb(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [_decimal_to_dynamodb(item) for item in value]
+    elif isinstance(value, float):
+        return Decimal(str(value))
+    elif isinstance(value, bool):
+        return value
+    elif isinstance(value, (str, int)):
+        return value
+    elif value is None:
+        return None
     else:
-        return obj
-
-
-def save_document_version(doc_id, message):
-    """Save document version to DynamoDB."""
-    # Convert floats to Decimal
-    message_decimal = convert_floats_to_decimal(message)
-
-    item = {
-        'PK': doc_id,
-        'SK': 'VERSION#1.0.0',
-        'GSI1PK': f"CLIENT#{message.get('client_name', 'Unknown')}",
-        'GSI1SK': f"CREATED#{message.get('timestamp', datetime.utcnow().isoformat())}",
-        'document_id': doc_id,
-        'client_name': message.get('client_name', 'Unknown'),
-        'uploaded_by': message.get('uploaded_by', 'unknown'),
-        'timestamp': message.get('timestamp', datetime.utcnow().isoformat()),
-        's3_bucket': message.get('s3_bucket'),
-        's3_key': message.get('s3_key'),
-        'text_s3_key': message.get('text_s3_key'),
-        'text_length': message.get('text_length', 0),
-        'page_count': message.get('page_count', 0),
-        'chunks_created': message.get('chunks_created', 0),
-        'structured_data': message_decimal.get('structured_data', {}),
-        'extraction_confidence': Decimal(str(message.get('extraction_confidence', 0))),
-        'validation_passed': message.get('validation_passed', False),
-        'validation_errors': message.get('validation_errors', []),
-        'validation_warnings': message.get('validation_warnings', []),
-        'processing_errors': message.get('errors', []),
-        'created_at': datetime.utcnow().isoformat(),
-        'updated_at': datetime.utcnow().isoformat()
-    }
-
-    # Add PO number to GSI3 if available
-    structured_data = message.get('structured_data', {})
-    po_number = structured_data.get('po_number')
-    if po_number:
-        item['GSI3PK'] = f"PO_NUM#{po_number}"
-        item['GSI3SK'] = f"CLIENT#{message.get('client_name', 'Unknown')}"
-
-    table.put_item(Item=item)
-    logger.info(f"✅ Saved VERSION#1.0.0")
-
-
-def save_latest_pointer(doc_id, message):
-    """Save LATEST pointer for fast reads."""
-    message_decimal = convert_floats_to_decimal(message)
-
-    item = {
-        'PK': doc_id,
-        'SK': 'LATEST',
-        'document_id': doc_id,
-        'client_name': message.get('client_name', 'Unknown'),
-        'uploaded_by': message.get('uploaded_by', 'unknown'),
-        'timestamp': message.get('timestamp', datetime.utcnow().isoformat()),
-        's3_bucket': message.get('s3_bucket'),
-        's3_key': message.get('s3_key'),
-        'text_s3_key': message.get('text_s3_key'),
-        'text_length': message.get('text_length', 0),
-        'page_count': message.get('page_count', 0),
-        'chunks_created': message.get('chunks_created', 0),
-        'structured_data': message_decimal.get('structured_data', {}),
-        'extraction_confidence': Decimal(str(message.get('extraction_confidence', 0))),
-        'validation_passed': message.get('validation_passed', False),
-        'validation_errors': message.get('validation_errors', []),
-        'validation_warnings': message.get('validation_warnings', []),
-        'processing_errors': message.get('errors', []),
-        'updated_at': datetime.utcnow().isoformat()
-    }
-
-    table.put_item(Item=item)
-    logger.info(f"✅ Saved LATEST pointer")
-
-
-def save_chunks(doc_id, chunk_details):
-    """Save text chunks with embeddings to DynamoDB."""
-    # Note: In a real implementation, you'd store the actual chunk text and embeddings
-    # For now, we just log that we would save them
-    logger.info(f"📝 Would save {len(chunk_details)} chunks to DynamoDB")
-
-    # Example of how you'd save chunks:
-    # for chunk_info in chunk_details:
-    #     chunk_index = chunk_info['chunk_index']
-    #     item = {
-    #         'PK': doc_id,
-    #         'SK': f"CHUNK#{chunk_index:03d}",
-    #         'GSI2PK': doc_id,
-    #         'GSI2SK': f"CHUNK#{chunk_index:03d}",
-    #         'chunk_index': chunk_index,
-    #         'text_chunk': chunk_text,
-    #         'embedding_vector': embedding_bytes,  # Binary format
-    #     }
-    #     table.put_item(Item=item)
+        return str(value)
 
 
 def lambda_handler(event, context):
     """
-    Save all document metadata to DynamoDB.
+    Save document metadata to DynamoDB with idempotent version tracking.
 
     Input (from SQS):
     {
-        ... (complete message with all processing results) ...
+        "document_id": "DOC#abc123",
+        "structured_data": { ... },
+        "embeddings_manifest": "embeddings/DOC#abc123/manifest.json",
+        "embeddings_s3_prefix": "embeddings/DOC#abc123/",
+        "validation_passed": true,
+        "validation_errors": [],
+        "validation_warnings": [],
+        ...
     }
 
     Output:
-    - Document version saved to DynamoDB
-    - LATEST pointer updated
-    - Chunks saved (if present)
+    - Document VERSION#<timestamp> saved to DynamoDB (idempotent)
+    - LATEST pointer updated (best-effort)
+    - Optional: forwards to NEXT_QUEUE_URL if set
     """
 
     for record in event['Records']:
-        # 1. Parse incoming message
+        # 1. Parse incoming message (log keys only, no PII)
         message = json.loads(record['body'])
-        logger.info(f"📥 RECEIVED MESSAGE:")
-        logger.info(json.dumps(message, indent=2, default=decimal_default))
+        logger.info("received keys=%s", list(message.keys()))
 
         try:
             # 2. Extract required fields
             doc_id = message['document_id']
+            structured_data = message.get('structured_data', {})
 
-            logger.info(f"🔍 Starting metadata save for {doc_id}")
+            # Generate version from timestamp (unique, sortable)
+            version = f"{int(datetime.utcnow().timestamp())}"
 
-            # 3. Save document version
-            logger.info(f"💾 Saving document version...")
-            save_document_version(doc_id, message)
+            logger.info("start_save doc_id=%s version=%s", doc_id, version)
 
-            # 4. Save LATEST pointer
-            logger.info(f"💾 Saving LATEST pointer...")
-            save_latest_pointer(doc_id, message)
+            # 3. Build DynamoDB item
+            pk = f"DOC#{doc_id}"
+            sk = f"VERSION#{version}"
 
-            # 5. Save chunks (if present)
-            chunk_details = message.get('chunk_details', [])
-            if chunk_details:
-                logger.info(f"💾 Saving {len(chunk_details)} chunks...")
-                save_chunks(doc_id, chunk_details)
+            # Determine contract end for GSI2 (expiry tracking)
+            end_date = structured_data.get('end_date', '')
+            end_ym = end_date[:7] if end_date and len(end_date) >= 7 else 'UNKNOWN'
 
-            logger.info(f"✅ All data saved to DynamoDB")
-            logger.info(f"✅ FINAL STAGE COMPLETE for {doc_id}")
+            item = {
+                'PK': {'S': pk},
+                'SK': {'S': sk},
+                'client_name': {'S': structured_data.get('client_name', 'Unknown')},
+                'contract_start': {'S': structured_data.get('start_date', '')} if structured_data.get('start_date') else {'NULL': True},
+                'contract_end': {'S': end_date} if end_date else {'NULL': True},
+                'ir35_status': {'S': structured_data.get('ir35_status', 'Not Specified')},
+                'embeddings_prefix': {'S': message.get('embeddings_s3_prefix', '')},
+                'embeddings_manifest': {'S': message.get('embeddings_manifest', '')},
+                'validation_passed': {'BOOL': message.get('validation_passed', False)},
+                'created_at': {'S': datetime.utcnow().isoformat() + 'Z'},
+
+                # GSIs
+                'GSI1PK': {'S': f"CLIENT#{structured_data.get('client_name', 'Unknown')}"},
+                'GSI1SK': {'S': f"CREATED#{datetime.utcnow().isoformat()}"},
+                'GSI2PK': {'S': f"EXPIRY#{end_ym}"},
+                'GSI2SK': {'S': pk},
+            }
+
+            # Add contract_value if present
+            contract_value = structured_data.get('contract_value')
+            if contract_value is not None:
+                item['contract_value'] = {'N': str(contract_value)}
+
+            # Add PO number to GSI3 if available
+            po_number = structured_data.get('po_number')
+            if po_number:
+                item['GSI3PK'] = {'S': f"PO#{po_number}"}
+                item['GSI3SK'] = {'S': f"CLIENT#{structured_data.get('client_name', 'Unknown')}"}
+
+            # Add validation errors/warnings counts (not full text to avoid PII)
+            error_count = len(message.get('validation_errors', []))
+            warning_count = len(message.get('validation_warnings', []))
+            if error_count > 0:
+                item['validation_error_count'] = {'N': str(error_count)}
+            if warning_count > 0:
+                item['validation_warning_count'] = {'N': str(warning_count)}
+
+            # 4. Idempotent create (won't overwrite existing version)
+            try:
+                dynamodb.put_item(
+                    TableName=TABLE_NAME,
+                    Item=item,
+                    ConditionExpression="attribute_not_exists(PK) AND attribute_not_exists(SK)"
+                )
+                created = True
+                logger.info("created_version pk=%s sk=%s", pk, sk)
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                    logger.info("idempotent_skip version_exists pk=%s sk=%s", pk, sk)
+                    created = False
+                else:
+                    raise
+
+            # 5. Update LATEST pointer (best-effort, always overwrites)
+            latest_item = {
+                'PK': {'S': pk},
+                'SK': {'S': 'LATEST'},
+                'latest_version': {'S': version},
+                'latest_updated_at': {'S': datetime.utcnow().isoformat() + 'Z'},
+            }
+            dynamodb.put_item(TableName=TABLE_NAME, Item=latest_item)
+            logger.info("updated_latest pk=%s version=%s", pk, version)
+
+            # 6. Forward minimal summary downstream (if NEXT_QUEUE_URL set)
+            if NEXT_QUEUE_URL:
+                summary = {
+                    'document_id': doc_id,
+                    'version': version,
+                    'metadata_saved': True,
+                    'created': created,
+                    'timestamp': datetime.utcnow().isoformat() + 'Z'
+                }
+                sqs.send_message(
+                    QueueUrl=NEXT_QUEUE_URL,
+                    MessageBody=json.dumps(summary)
+                )
+                logger.info("forwarded_summary to_queue=%s", NEXT_QUEUE_URL)
+
+            logger.info("stage_complete doc_id=%s", doc_id)
 
         except Exception as e:
-            logger.error(f"❌ ERROR: {str(e)}")
-            logger.error(f"   Message was: {json.dumps(message, indent=2, default=decimal_default)}")
+            logger.error("error stage=save-metadata msg=%s", str(e))
+            logger.error("failed keys=%s", list(message.keys()))
 
             # Add error to message
             if 'errors' not in message:

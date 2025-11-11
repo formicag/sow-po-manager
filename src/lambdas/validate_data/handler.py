@@ -2,108 +2,34 @@
 Lambda: validate_data
 Purpose: Validate extracted structured data with business logic
 Flow: validation queue → validate_data → save queue
+
+FIXED:
+- Table-driven validation with deterministic error codes
+- Removed all PII from logs (only keys, counts, codes)
+- NEXT_QUEUE_URL now required (fail fast)
+- Removed emojis from logs (grepable output)
+- Structured violations with {code, message, field, severity}
 """
 
 import json
 import boto3
 import logging
 import os
-from datetime import datetime, date
+from datetime import datetime
+from validation_rules import validate_structured_data
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 sqs = boto3.client('sqs')
 
-NEXT_QUEUE_URL = os.environ.get('NEXT_QUEUE_URL')
+NEXT_QUEUE_URL = os.environ['NEXT_QUEUE_URL']  # Required - fail fast if missing
 
-# Validation thresholds
-MAX_DAY_RATE = 1200  # GBP
-MIN_DAY_RATE = 200   # GBP
-MAX_CONTRACT_VALUE = 10000000  # £10M
-
-
-def validate_day_rates(day_rates):
-    """Validate day rates with business logic."""
-    warnings = []
-    errors = []
-
-    for rate_info in day_rates:
-        role = rate_info.get('role', 'Unknown')
-        rate = rate_info.get('rate', 0)
-
-        # Check if rate is within reasonable bounds
-        if rate > MAX_DAY_RATE:
-            warnings.append(f"Day rate very high for {role}: £{rate}")
-
-        if rate < MIN_DAY_RATE:
-            warnings.append(f"Day rate very low for {role}: £{rate}")
-
-        if rate <= 0:
-            errors.append(f"Invalid day rate for {role}: £{rate}")
-
-    return errors, warnings
-
-
-def validate_dates(start_date, end_date):
-    """Validate contract dates."""
-    errors = []
-    warnings = []
-
-    try:
-        if start_date:
-            start = datetime.fromisoformat(start_date).date()
-        else:
-            errors.append("Missing start date")
-            return errors, warnings
-
-        if end_date:
-            end = datetime.fromisoformat(end_date).date()
-        else:
-            errors.append("Missing end date")
-            return errors, warnings
-
-        # Check if end date is after start date
-        if end <= start:
-            errors.append(f"End date ({end_date}) must be after start date ({start_date})")
-
-        # Check if contract is in the past
-        today = date.today()
-        if end < today:
-            warnings.append(f"Contract has already ended ({end_date})")
-
-        # Check contract duration
-        duration_days = (end - start).days
-        if duration_days > 365 * 3:  # More than 3 years
-            warnings.append(f"Contract duration is very long: {duration_days} days")
-
-    except ValueError as e:
-        errors.append(f"Invalid date format: {str(e)}")
-
-    return errors, warnings
-
-
-def validate_contract_value(contract_value):
-    """Validate contract value."""
-    errors = []
-    warnings = []
-
-    if contract_value is None:
-        warnings.append("Contract value not specified")
-        return errors, warnings
-
-    if contract_value <= 0:
-        errors.append(f"Invalid contract value: £{contract_value}")
-
-    if contract_value > MAX_CONTRACT_VALUE:
-        warnings.append(f"Very large contract value: £{contract_value:,.2f}")
-
-    return errors, warnings
 
 
 def lambda_handler(event, context):
     """
-    Validate extracted structured data.
+    Validate extracted structured data using table-driven rules.
 
     Input (from SQS):
     {
@@ -121,85 +47,58 @@ def lambda_handler(event, context):
     {
         ... (all input fields) ...,
         "validation_passed": true/false,
-        "validation_errors": [...],
-        "validation_warnings": [...]
+        "validation_errors": [{code, message, field, severity}],
+        "validation_warnings": [{code, message, field, severity}]
     }
     """
 
     for record in event['Records']:
-        # 1. Parse incoming message
+        # 1. Parse incoming message (log keys only, no PII)
         message = json.loads(record['body'])
-        logger.info(f"📥 RECEIVED MESSAGE:")
-        logger.info(json.dumps(message, indent=2))
+        logger.info("received keys=%s", list(message.keys()))
 
         try:
             # 2. Extract required fields
             doc_id = message['document_id']
             structured_data = message.get('structured_data', {})
 
-            logger.info(f"🔍 Starting validation for {doc_id}")
+            logger.info("start_validation doc_id=%s", doc_id)
 
-            all_errors = []
-            all_warnings = []
+            # 3. Run table-driven validation
+            validation_passed, errors, warnings = validate_structured_data(structured_data)
 
-            # 3. Validate client name
-            client_name = structured_data.get('client_name')
-            if not client_name:
-                all_errors.append("Missing client name")
+            # 4. Log results (codes only, no PII)
+            logger.info("validation_complete passed=%s errors=%d warnings=%d",
+                       validation_passed, len(errors), len(warnings))
 
-            # 4. Validate contract value
-            contract_value = structured_data.get('contract_value')
-            errors, warnings = validate_contract_value(contract_value)
-            all_errors.extend(errors)
-            all_warnings.extend(warnings)
+            if errors:
+                error_codes = [e['code'] for e in errors]
+                logger.warning("validation_errors codes=%s", error_codes)
 
-            # 5. Validate dates
-            start_date = structured_data.get('start_date')
-            end_date = structured_data.get('end_date')
-            errors, warnings = validate_dates(start_date, end_date)
-            all_errors.extend(errors)
-            all_warnings.extend(warnings)
+            if warnings:
+                warning_codes = [w['code'] for w in warnings]
+                logger.info("validation_warnings codes=%s", warning_codes)
 
-            # 6. Validate day rates
-            day_rates = structured_data.get('day_rates', [])
-            errors, warnings = validate_day_rates(day_rates)
-            all_errors.extend(errors)
-            all_warnings.extend(warnings)
-
-            # 7. Determine if validation passed
-            validation_passed = len(all_errors) == 0
-
-            logger.info(f"{'✅' if validation_passed else '❌'} Validation complete")
-            logger.info(f"   Errors: {len(all_errors)}")
-            logger.info(f"   Warnings: {len(all_warnings)}")
-
-            if all_errors:
-                logger.warning(f"   Validation errors: {all_errors}")
-            if all_warnings:
-                logger.info(f"   Validation warnings: {all_warnings}")
-
-            # 8. ADD results to message
+            # 5. ADD results to message
             message['validation_passed'] = validation_passed
-            message['validation_errors'] = all_errors
-            message['validation_warnings'] = all_warnings
+            message['validation_errors'] = errors
+            message['validation_warnings'] = warnings
 
-            # 9. Log outgoing message
-            logger.info(f"📤 FORWARDING MESSAGE:")
-            logger.info(json.dumps(message, indent=2))
+            # 6. Log outgoing message (keys only, no PII)
+            logger.info("forwarding keys=%s", list(message.keys()))
 
-            # 10. Send to next queue (even if validation failed - we still want to save it)
-            if NEXT_QUEUE_URL:
-                sqs.send_message(
-                    QueueUrl=NEXT_QUEUE_URL,
-                    MessageBody=json.dumps(message)
-                )
-                logger.info(f"✅ Message forwarded to save queue")
+            # 7. Send to next queue (even if validation failed - we still want to save it)
+            sqs.send_message(
+                QueueUrl=NEXT_QUEUE_URL,
+                MessageBody=json.dumps(message)
+            )
+            logger.info("forwarded to_queue=save")
 
-            logger.info(f"✅ STAGE COMPLETE for {doc_id}")
+            logger.info("stage_complete doc_id=%s", doc_id)
 
         except Exception as e:
-            logger.error(f"❌ ERROR: {str(e)}")
-            logger.error(f"   Message was: {json.dumps(message, indent=2)}")
+            logger.error("error stage=validate-data msg=%s", str(e))
+            logger.error("failed keys=%s", list(message.keys()))
 
             # Add error to message
             if 'errors' not in message:

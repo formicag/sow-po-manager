@@ -37,37 +37,7 @@ resource "aws_s3_bucket_public_access_block" "documents" {
   restrict_public_buckets = true
 }
 
-# Lifecycle rule to manage storage costs
-resource "aws_s3_bucket_lifecycle_configuration" "documents" {
-  bucket = aws_s3_bucket.documents.id
-
-  rule {
-    id     = "transition-to-ia"
-    status = "Enabled"
-
-    # Move to Infrequent Access after 90 days
-    transition {
-      days          = 90
-      storage_class = "STANDARD_IA"
-    }
-
-    # Move to Glacier after 365 days
-    transition {
-      days          = 365
-      storage_class = "GLACIER"
-    }
-  }
-
-  rule {
-    id     = "delete-old-versions"
-    status = "Enabled"
-
-    # Delete non-current versions after 30 days
-    noncurrent_version_expiration {
-      noncurrent_days = 30
-    }
-  }
-}
+# NOTE: Lifecycle rules moved to cost_guardrails.tf for better organization
 
 # S3 bucket notification configuration (sends events to EventBridge)
 resource "aws_s3_bucket_notification" "documents" {

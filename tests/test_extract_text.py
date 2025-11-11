@@ -9,19 +9,65 @@ import sys
 import os
 from io import BytesIO
 
-# Add Lambda to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'lambdas', 'extract_text'))
+# Set required environment variables BEFORE importing handler
+os.environ.setdefault('BUCKET_NAME', 'test-bucket')
+os.environ.setdefault('NEXT_QUEUE_URL', 'https://sqs.test.local/next')
+
+# Add Lambda to path with specific name to avoid conflicts
+extract_text_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'lambdas', 'extract_text')
+if extract_text_path not in sys.path:
+    sys.path.insert(0, extract_text_path)
 
 
 class TestExtractText:
     """Test PDF text extraction"""
 
-    @patch('handler.sqs')
-    @patch('handler.s3')
-    @patch('handler.PdfReader')
-    def test_lambda_handler_success(self, mock_pdf_reader, mock_s3, mock_sqs):
+    @patch('sys.modules')
+    def test_lambda_handler_success(self, mock_modules):
         """Test successful PDF text extraction"""
-        from handler import lambda_handler
+        # Import handler fresh
+        import importlib
+        if 'handler' in sys.modules:
+            del sys.modules['handler']
+
+        sys.path.insert(0, extract_text_path)
+        import handler
+
+        # Mock AWS clients
+        handler.sqs = Mock()
+        handler.s3 = Mock()
+
+        # Mock PdfReader
+        from unittest.mock import MagicMock
+        mock_page1 = Mock()
+        mock_page1.extract_text.return_value = "Page 1 content"
+        mock_page2 = Mock()
+        mock_page2.extract_text.return_value = "Page 2 content"
+        mock_reader = Mock()
+        mock_reader.pages = [mock_page1, mock_page2]
+
+        # Mock S3
+        handler.s3.get_object.return_value = {'Body': Mock(read=lambda: b'%PDF-1.4 mock pdf content')}
+
+        # Patch PdfReader
+        with patch('handler.PdfReader', return_value=mock_reader):
+            event = {
+                'Records': [{
+                    'body': json.dumps({
+                        'document_id': 'DOC#test123',
+                        's3_bucket': 'test-bucket',
+                        's3_key': 'uploads/DOC#test123/document.pdf',
+                        'timestamp': '2025-11-11T00:00:00Z'
+                    })
+                }]
+            }
+
+            result = handler.lambda_handler(event, None)
+
+            assert result['statusCode'] == 200
+            handler.s3.get_object.assert_called_once()
+            handler.s3.put_object.assert_called_once()
+            handler.sqs.send_message.assert_called_once()
 
         # Mock S3 get_object
         mock_pdf_content = b'%PDF-1.4 mock pdf content'

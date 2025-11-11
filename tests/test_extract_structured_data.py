@@ -8,9 +8,15 @@ from unittest.mock import Mock, patch, MagicMock
 import sys
 import os
 
+# Set required environment variables BEFORE importing handler
+os.environ.setdefault('BUCKET_NAME', 'test-bucket')
+os.environ.setdefault('NEXT_QUEUE_URL', 'https://sqs.test.local/next')
+os.environ.setdefault('GEMINI_API_KEY', 'test-api-key')
+
 # Add Lambda to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'lambdas', 'extract_structured_data'))
 
+# Import legacy models.py for TestModels tests (still exists for backward compatibility)
 from models import validate_sow_data
 
 
@@ -213,7 +219,8 @@ class TestExtractWithGemini:
             extract_with_gemini("Sample text")
 
     @patch('handler.requests.post')
-    def test_extract_with_gemini_no_candidates(self, mock_post):
+    @patch('handler.time.sleep')  # Mock sleep to speed up test
+    def test_extract_with_gemini_no_candidates(self, mock_sleep, mock_post):
         """Test handling when no candidates in response"""
         from handler import extract_with_gemini
 
@@ -226,7 +233,7 @@ class TestExtractWithGemini:
         }
         mock_post.return_value = mock_response
 
-        with pytest.raises(Exception, match="No candidates in response"):
+        with pytest.raises(Exception, match="No candidates in Gemini response"):
             extract_with_gemini("Sample text")
 
 
