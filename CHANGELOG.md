@@ -2,6 +2,30 @@
 
 All notable changes to the SOW/PO Manager project.
 
+## [1.3.0] - 2025-11-11
+
+### Added - Atomic Handoff with manifest.json
+- **manifest.json written LAST** after all chunks persisted to S3
+- Manifest contains metadata: `document_id`, `embeddings_prefix`, `model`, `chunks`, `embedded`, `created_at`
+- Downstream processes can now reliably detect completion by checking manifest existence
+- Message now includes `embeddings_manifest` key for tracking
+
+### Changed
+- Idempotency check now reads manifest.json instead of list_objects_v2 (more atomic)
+- If manifest exists, metadata read from file instead of re-counting chunks
+- Single S3 get_object call vs multiple list_objects calls (more efficient)
+
+### Technical Details
+- Manifest provides audit trail with timestamp and model version
+- Atomic handoff pattern: "if manifest exists, embeddings are complete"
+- All 5 chunk_and_embed tests still passing
+- Deployed to AWS: 2025-11-11T02:48:58Z
+- Manual verification: manifest created for DOC#test-v13
+
+Credit: Implementing ChatGPT-5's final valid enhancement suggestion
+
+---
+
 ## [1.2.0] - 2025-11-11
 
 ### Fixed - Addressing Code Review Feedback
