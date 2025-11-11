@@ -27,6 +27,7 @@ import os
 import logging
 from datetime import datetime
 from botocore.config import Config
+from botocore.exceptions import ClientError
 import boto3
 
 logger = logging.getLogger()
@@ -147,8 +148,11 @@ def lambda_handler(event, context):
                 sqs.send_message(QueueUrl=NEXT_QUEUE_URL, MessageBody=json.dumps(message))
                 logger.info("forwarded existing state doc_id=%s", doc_id)
                 continue  # Skip to next record
-            except s3.exceptions.NoSuchKey:
-                logger.info("no manifest found, proceeding with embedding generation")
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'NoSuchKey':
+                    logger.info("no manifest found, proceeding with embedding generation")
+                else:
+                    logger.warning("idempotency check failed: %s (continuing)", str(e))
             except Exception as e:
                 logger.warning("idempotency check failed: %s (continuing)", str(e))
 
