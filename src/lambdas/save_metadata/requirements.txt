@@ -1,0 +1,2 @@
+# No external dependencies needed
+# boto3 and DynamoDB client are available in Lambda runtime

@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOW/PO Document Management</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .card {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        .section-title {
+            font-size: 20px;
+            color: #333;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        input[type="text"],
+        input[type="file"],
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .status {
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .documents-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .document-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px solid #e0e0e0;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .document-card:hover {
+            transform: translateY(-4px);
+            border-color: #667eea;
+        }
+
+        .document-title {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .document-meta {
+            font-size: 13px;
+            color: #666;
+            margin: 5px 0;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .badge-warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .badge-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>📄 SOW/PO Document Management</h1>
+            <p class="subtitle">Upload, extract, and search Statement of Work documents</p>
+        </div>
+
+        <!-- Upload Section -->
+        <div class="card">
+            <h2 class="section-title">📤 Upload Document</h2>
+            <div id="upload-status" class="status"></div>
+
+            <div class="form-group">
+                <label for="client-name">Client Name</label>
+                <input type="text" id="client-name" placeholder="e.g., Virgin Media O2">
+            </div>
+
+            <div class="form-group">
+                <label for="uploaded-by">Your Email</label>
+                <input type="text" id="uploaded-by" placeholder="e.g., gianluca@colibri.com">
+            </div>
+
+            <div class="form-group">
+                <label for="file-upload">Select PDF Document</label>
+                <input type="file" id="file-upload" accept=".pdf">
+            </div>
+
+            <button class="btn" id="upload-btn" onclick="uploadDocument()">
+                Upload Document
+            </button>
+        </div>
+
+        <!-- Search Section -->
+        <div class="card">
+            <h2 class="section-title">🔍 Search Documents</h2>
+            <div id="search-status" class="status"></div>
+
+            <div class="form-group">
+                <label for="search-type">Search Type</label>
+                <select id="search-type" onchange="toggleSearchInputs()">
+                    <option value="list_all">List All Documents</option>
+                    <option value="search_by_client">Search by Client</option>
+                    <option value="get_document">Get Specific Document</option>
+                </select>
+            </div>
+
+            <div class="form-group" id="client-search-group" style="display: none;">
+                <label for="search-client">Client Name</label>
+                <input type="text" id="search-client" placeholder="e.g., VMO2">
+            </div>
+
+            <div class="form-group" id="doc-id-group" style="display: none;">
+                <label for="search-doc-id">Document ID</label>
+                <input type="text" id="search-doc-id" placeholder="e.g., DOC#abc123">
+            </div>
+
+            <button class="btn btn-secondary" id="search-btn" onclick="searchDocuments()">
+                Search Documents
+            </button>
+
+            <div id="search-results" class="documents-grid"></div>
+        </div>
+    </div>
+
+    <script>
+        function showStatus(elementId, message, type) {
+            const status = document.getElementById(elementId);
+            status.className = `status ${type}`;
+            status.textContent = message;
+            status.style.display = 'block';
+
+            if (type === 'success') {
+                setTimeout(() => {
+                    status.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        function toggleSearchInputs() {
+            const searchType = document.getElementById('search-type').value;
+            document.getElementById('client-search-group').style.display =
+                searchType === 'search_by_client' ? 'block' : 'none';
+            document.getElementById('doc-id-group').style.display =
+                searchType === 'get_document' ? 'block' : 'none';
+        }
+
+        async function uploadDocument() {
+            const clientName = document.getElementById('client-name').value;
+            const uploadedBy = document.getElementById('uploaded-by').value;
+            const fileInput = document.getElementById('file-upload');
+            const file = fileInput.files[0];
+
+            if (!clientName || !uploadedBy || !file) {
+                showStatus('upload-status', 'Please fill all fields and select a file', 'error');
+                return;
+            }
+
+            const uploadBtn = document.getElementById('upload-btn');
+            uploadBtn.disabled = true;
+            uploadBtn.innerHTML = '<span class="spinner"></span>Uploading...';
+
+            try {
+                // Step 1: Get presigned URL
+                showStatus('upload-status', 'Getting upload URL...', 'info');
+
+                const urlResponse = await fetch('/api/get-upload-url', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        client_name: clientName,
+                        uploaded_by: uploadedBy,
+                        file_name: file.name
+                    })
+                });
+
+                if (!urlResponse.ok) {
+                    throw new Error('Failed to get upload URL');
+                }
+
+                const urlData = await urlResponse.json();
+
+                // Step 2: Upload file to S3
+                showStatus('upload-status', 'Uploading file to S3...', 'info');
+
+                const uploadResponse = await fetch(urlData.upload_url, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/pdf'},
+                    body: file
+                });
+
+                if (!uploadResponse.ok) {
+                    throw new Error('Failed to upload file to S3');
+                }
+
+                showStatus('upload-status',
+                    `✅ Document uploaded successfully! Document ID: ${urlData.document_id}`,
+                    'success');
+
+                // Reset form
+                document.getElementById('client-name').value = '';
+                document.getElementById('uploaded-by').value = '';
+                fileInput.value = '';
+
+            } catch (error) {
+                showStatus('upload-status', `❌ Error: ${error.message}`, 'error');
+            } finally {
+                uploadBtn.disabled = false;
+                uploadBtn.innerHTML = 'Upload Document';
+            }
+        }
+
+        async function searchDocuments() {
+            const searchType = document.getElementById('search-type').value;
+            const searchBtn = document.getElementById('search-btn');
+            searchBtn.disabled = true;
+            searchBtn.innerHTML = '<span class="spinner"></span>Searching...';
+
+            try {
+                const payload = {action: searchType};
+
+                if (searchType === 'search_by_client') {
+                    payload.client_name = document.getElementById('search-client').value;
+                    if (!payload.client_name) {
+                        throw new Error('Please enter a client name');
+                    }
+                }
+
+                if (searchType === 'get_document') {
+                    payload.document_id = document.getElementById('search-doc-id').value;
+                    if (!payload.document_id) {
+                        throw new Error('Please enter a document ID');
+                    }
+                }
+
+                showStatus('search-status', 'Searching...', 'info');
+
+                const response = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    throw new Error('Search failed');
+                }
+
+                const data = await response.json();
+
+                showStatus('search-status', `Found ${data.count} document(s)`, 'success');
+                displaySearchResults(data.results);
+
+            } catch (error) {
+                showStatus('search-status', `❌ Error: ${error.message}`, 'error');
+            } finally {
+                searchBtn.disabled = false;
+                searchBtn.innerHTML = 'Search Documents';
+            }
+        }
+
+        function displaySearchResults(results) {
+            const container = document.getElementById('search-results');
+
+            if (!results || results.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No documents found</p>';
+                return;
+            }
+
+            container.innerHTML = results.map(doc => {
+                const validationBadge = doc.validation_passed
+                    ? '<span class="badge badge-success">✓ Validated</span>'
+                    : '<span class="badge badge-warning">⚠ Validation Issues</span>';
+
+                const structuredData = doc.structured_data || {};
+                const contractValue = structuredData.contract_value
+                    ? `£${structuredData.contract_value.toLocaleString()}`
+                    : 'N/A';
+
+                return `
+                    <div class="document-card">
+                        <div class="document-title">${doc.client_name || 'Unknown Client'}</div>
+                        <div class="document-meta">📄 ID: ${doc.document_id}</div>
+                        <div class="document-meta">📅 ${doc.timestamp || 'Unknown date'}</div>
+                        <div class="document-meta">💰 Value: ${contractValue}</div>
+                        <div class="document-meta">📊 Pages: ${doc.page_count || 'N/A'}</div>
+                        <div style="margin-top: 10px;">${validationBadge}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Load all documents on page load
+        window.addEventListener('load', () => {
+            document.getElementById('search-type').value = 'list_all';
+            searchDocuments();
+        });
+    </script>
+</body>
+</html>

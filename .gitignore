@@ -1,0 +1,118 @@
+# Sensitive documents (NEVER commit real SOWs/POs)
+SOWs/*
+!SOWs/.gitkeep
+POs/*
+!POs/.gitkeep
+upload_manifest.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg
+*.egg-info/
+dist/
+build/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+.cache
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# Secrets
+*.pem
+*.key
+.env
+.env.local
+secrets.json
+credentials.json
+.secrets/
+vertex-ai-key.json
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Build artifacts
+*.zip
+*.tar.gz
+*.rar
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Lambda package dependencies
+src/lambdas/*/boto3/
+src/lambdas/*/botocore/
+src/lambdas/*/certifi/
+src/lambdas/*/chardet/
+src/lambdas/*/dateutil/
+src/lambdas/*/docutils/
+src/lambdas/*/idna/
+src/lambdas/*/jmespath/
+src/lambdas/*/pip/
+src/lambdas/*/pkg_resources/
+src/lambdas/*/requests/
+src/lambdas/*/s3transfer/
+src/lambdas/*/setuptools/
+src/lambdas/*/six.py
+src/lambdas/*/urllib3/
+
+# Compiled Python
+*.pyc
+
+# Editor backups
+*~
+\#*\#
+.\#*
+
+# Temporary files
+tmp/
+temp/
+*.tmp

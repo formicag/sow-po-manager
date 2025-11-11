@@ -1,0 +1,2 @@
+# boto3 includes bedrock-runtime client
+# No additional dependencies needed
