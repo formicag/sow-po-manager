@@ -15,6 +15,11 @@ FIXED (v1.2.0):
 - Production-correct defaults (eu-west-1, Titan V2)
 - NEXT_QUEUE_URL required at module load (fail fast)
 - Idempotency: skips reprocessing if embeddings already exist
+
+FIXED (v1.3.0):
+- Atomic handoff: writes manifest.json LAST with metadata
+- Idempotency now checks manifest.json (more reliable than list_objects)
+- Message includes embeddings_manifest key for downstream tracking
 """
 
 import json
@@ -124,23 +129,26 @@ def lambda_handler(event, context):
 
             logger.info("start chunk+embed doc_id=%s", doc_id)
 
-            # 2a. Idempotency check: skip if embeddings already exist
+            # 2a. Idempotency check: skip if manifest.json exists (atomic handoff marker)
             embeddings_prefix = f"{EMBED_S3_PREFIX}{doc_id}/"
+            manifest_key = f"{embeddings_prefix}manifest.json"
             try:
-                existing = s3.list_objects_v2(Bucket=bucket, Prefix=embeddings_prefix, MaxKeys=1)
-                if existing.get('KeyCount', 0) > 0:
-                    logger.info("idempotent skip: embeddings exist at %s", embeddings_prefix)
-                    # Forward existing state without reprocessing
-                    if 'embeddings_persisted' not in message:
-                        # Count existing embeddings
-                        all_objects = s3.list_objects_v2(Bucket=bucket, Prefix=embeddings_prefix)
-                        message['embeddings_persisted'] = all_objects.get('KeyCount', 0)
-                        message['embeddings_s3_prefix'] = embeddings_prefix
-                        message['chunks_created'] = message.get('chunks_created', all_objects.get('KeyCount', 0))
-                    # Forward to next queue
-                    sqs.send_message(QueueUrl=NEXT_QUEUE_URL, MessageBody=json.dumps(message))
-                    logger.info("forwarded existing state doc_id=%s", doc_id)
-                    continue  # Skip to next record
+                # Try to read manifest - if it exists, embeddings are complete
+                manifest_obj = s3.get_object(Bucket=bucket, Key=manifest_key)
+                manifest_data = json.loads(manifest_obj['Body'].read().decode('utf-8'))
+                logger.info("idempotent skip: manifest exists at %s", manifest_key)
+                # Forward existing state without reprocessing
+                if 'embeddings_persisted' not in message:
+                    message['embeddings_persisted'] = manifest_data.get('embedded', 0)
+                    message['chunks_created'] = manifest_data.get('chunks', 0)
+                    message['embeddings_s3_prefix'] = embeddings_prefix
+                    message['embeddings_manifest'] = manifest_key
+                # Forward to next queue
+                sqs.send_message(QueueUrl=NEXT_QUEUE_URL, MessageBody=json.dumps(message))
+                logger.info("forwarded existing state doc_id=%s", doc_id)
+                continue  # Skip to next record
+            except s3.exceptions.NoSuchKey:
+                logger.info("no manifest found, proceeding with embedding generation")
             except Exception as e:
                 logger.warning("idempotency check failed: %s (continuing)", str(e))
 
@@ -183,10 +191,28 @@ def lambda_handler(event, context):
 
             logger.info("persisted embeddings=%s at s3://%s/%s", persisted, bucket, embeddings_prefix)
 
+            # 5b. Write manifest.json LAST for atomic handoff
+            manifest = {
+                "document_id": doc_id,
+                "embeddings_prefix": embeddings_prefix,
+                "model": EMBED_MODEL_ID,
+                "chunks": len(chunks),
+                "embedded": persisted,
+                "created_at": datetime.utcnow().isoformat() + "Z"
+            }
+            manifest_key = f"{embeddings_prefix}manifest.json"
+            s3.put_object(
+                Bucket=bucket,
+                Key=manifest_key,
+                Body=json.dumps(manifest, indent=2).encode("utf-8")
+            )
+            logger.info("wrote manifest s3://%s/%s", bucket, manifest_key)
+
             # 6. ADD results to message (no PII, no previews)
             message['chunks_created'] = len(chunks)
             message['embeddings_persisted'] = persisted
             message['embeddings_s3_prefix'] = embeddings_prefix
+            message['embeddings_manifest'] = manifest_key
 
             # 7. Log outgoing message (keys only, no PII)
             logger.info("forwarding keys: %s", list(message.keys()))
