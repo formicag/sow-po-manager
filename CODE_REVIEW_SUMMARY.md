@@ -15,9 +15,10 @@ Enterprise-grade serverless document management system for processing Statement 
 - **AWS Resources Deployed**: 45 resources
 - **Lambda Functions**: 7 functions
 - **SOW Documents Processed**: 16 documents (1 test + 15 production)
-- **Test Suite**: 27 tests (20 passing, 7 with minor mocking issues)
+- **Test Suite**: 32 tests (27 existing + 5 new for chunk_and_embed)
 - **Target Cost**: <£5/month
 - **Pipeline Stages**: 5-stage SQS chain
+- **Embeddings**: Now persisting to S3 (1024-dim vectors from Titan V2)
 
 ---
 

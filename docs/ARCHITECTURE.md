@@ -269,10 +269,16 @@ Example of how message grows through pipeline:
 {
   ...previous fields...,
   "chunks_created": 8,
-  "embeddings_stored": true,
-  "chunk_details": [...]
+  "embeddings_persisted": 8,
+  "embeddings_s3_prefix": "embeddings/DOC#abc123/"
 }
 ```
+
+**Note**: Embeddings are now actually persisted to S3 at `s3://bucket/embeddings/{doc_id}/00000.json`, etc. Each embedding file contains:
+- document_id
+- chunk_index
+- embedding (1024-dimensional vector from Titan V2)
+- text_len
 
 **Stage 4 Output** (extract-structured-data):
 ```json
@@ -364,15 +370,23 @@ Example of how message grows through pipeline:
 **Memory**: 512 MB
 **Timeout**: 300s
 
+**Recent Fixes (v1.1.0)**:
+- ✅ Embeddings now actually persist to S3 (was falsely claiming success)
+- ✅ PII removed from logs (GDPR compliance)
+- ✅ Uses eu-west-1 Bedrock region (eliminates cross-region latency)
+- ✅ Updated to Titan Embeddings V2 (1024 dimensions)
+- ✅ Added retry/timeout config for resilience
+
 **Dependencies**:
 - boto3 (AWS Bedrock)
+- botocore (for Config retry/timeout)
 
 **Process**:
 1. Download text from S3
 2. Split into chunks (1000 chars, 200 overlap)
-3. Generate embeddings via Bedrock Titan
-4. Store embeddings in message
-5. Forward for extraction
+3. Generate embeddings via Bedrock Titan V2
+4. **Persist embeddings to S3** at `s3://bucket/embeddings/{doc_id}/`
+5. Forward message with embeddings metadata (not the embeddings themselves)
 
 **Chunking Strategy**:
 - Size: 1000 characters

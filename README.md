@@ -2,6 +2,18 @@
 
 Enterprise-grade document management system for Statement of Work (SOW) and Purchase Order (PO) documents. Built with AWS serverless architecture, targeting <£5/month operational costs.
 
+## Recent Updates (v1.1.0)
+
+✅ **Critical Bug Fixes Applied** - chunk_and_embed Lambda completely rewritten:
+- Embeddings now actually persist to S3 (was lying about it before)
+- PII removed from CloudWatch logs (GDPR compliance)
+- Cross-region latency eliminated (Bedrock now uses eu-west-1)
+- Updated to Titan Embeddings V2 (1024 dimensions)
+- Added retry/timeout config for resilience
+- Fixed chunking validation to prevent infinite loops
+
+See [CHANGELOG.md](CHANGELOG.md) for full details.
+
 ## Overview
 
 This system automatically extracts, validates, and indexes SOW/PO documents using:

@@ -178,7 +178,7 @@ resource "aws_lambda_function" "chunk_and_embed" {
       BUCKET_NAME      = aws_s3_bucket.documents.id
       NEXT_QUEUE_URL   = aws_sqs_queue.extraction.url
       BEDROCK_REGION   = var.aws_region
-      EMBED_MODEL_ID   = "amazon.titan-embed-text-v1"
+      EMBED_MODEL_ID   = "amazon.titan-embed-text-v2:0"
       EMBED_S3_PREFIX  = "embeddings/"
       CHUNK_SIZE       = "1000"
       CHUNK_OVERLAP    = "200"
