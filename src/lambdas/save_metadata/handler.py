@@ -10,6 +10,11 @@ FIXED (v1.5.0):
 - PII-safe logging (keys only, no values)
 - Proper GSI keys for expiry tracking (GSI2PK/SK)
 - Best-effort LATEST pointer updates
+
+CRITICAL FIXES (v1.6.0):
+- Race-proof LATEST pointer: uses update_item with condition (only updates if version >= current)
+- Prevents concurrent writes from setting LATEST to an older version
+- Conditional expression: attribute_not_exists(latest_version) OR latest_version < :new_version
 """
 
 import json
@@ -147,15 +152,30 @@ def lambda_handler(event, context):
                 else:
                     raise
 
-            # 5. Update LATEST pointer (best-effort, always overwrites)
-            latest_item = {
-                'PK': {'S': pk},
-                'SK': {'S': 'LATEST'},
-                'latest_version': {'S': version},
-                'latest_updated_at': {'S': datetime.utcnow().isoformat() + 'Z'},
-            }
-            dynamodb.put_item(TableName=TABLE_NAME, Item=latest_item)
-            logger.info("updated_latest pk=%s version=%s", pk, version)
+            # 5. Update LATEST pointer (race-proof: only if new version >= current)
+            # Use update_item with condition to prevent race where older version overwrites newer
+            try:
+                dynamodb.update_item(
+                    TableName=TABLE_NAME,
+                    Key={
+                        'PK': {'S': pk},
+                        'SK': {'S': 'LATEST'}
+                    },
+                    UpdateExpression='SET latest_version = :v, latest_updated_at = :ts',
+                    ConditionExpression='attribute_not_exists(latest_version) OR latest_version < :v',
+                    ExpressionAttributeValues={
+                        ':v': {'S': version},
+                        ':ts': {'S': datetime.utcnow().isoformat() + 'Z'}
+                    }
+                )
+                logger.info("updated_latest pk=%s version=%s", pk, version)
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                    # Newer version already exists - this is fine (concurrent writes)
+                    logger.info("latest_skip newer_version_exists pk=%s version=%s", pk, version)
+                else:
+                    # Other error - log but don't fail (best-effort)
+                    logger.warning("latest_update_failed pk=%s error=%s", pk, str(e))
 
             # 6. Forward minimal summary downstream (if NEXT_QUEUE_URL set)
             if NEXT_QUEUE_URL:

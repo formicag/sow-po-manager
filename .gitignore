@@ -1,6 +1,7 @@
 # Sensitive documents (NEVER commit real SOWs/POs)
-SOWs/*
-!SOWs/.gitkeep
+# TEMPORARILY COMMENTED OUT FOR PRIVATE REPO - User requested SOWs in GitHub for ChatGPT review
+# SOWs/*
+# !SOWs/.gitkeep
 POs/*
 !POs/.gitkeep
 upload_manifest.json
