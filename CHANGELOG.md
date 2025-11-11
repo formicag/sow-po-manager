@@ -10,19 +10,30 @@ All notable changes to the SOW/PO Manager project.
 - Downstream processes can now reliably detect completion by checking manifest existence
 - Message now includes `embeddings_manifest` key for tracking
 
+### Added - CI/CD Gate Tests
+- **4 new tests in test_chunk_and_embed_ci_gate.py** (all passing)
+- Test 1: Verifies S3 persistence (chunks + manifest.json)
+- Test 2: Verifies SQS message purity (no PII, only canonical keys)
+- Test 3: Verifies chunker guard (overlap < size raises ValueError)
+- Test 4: Verifies NEXT_QUEUE_URL enforcement (missing raises KeyError)
+- Uses fake AWS clients (no moto dependency, no real AWS calls)
+
 ### Changed
 - Idempotency check now reads manifest.json instead of list_objects_v2 (more atomic)
 - If manifest exists, metadata read from file instead of re-counting chunks
 - Single S3 get_object call vs multiple list_objects calls (more efficient)
 
+### Fixed
+- NoSuchKey exception handling now uses ClientError (100% reliable)
+
 ### Technical Details
 - Manifest provides audit trail with timestamp and model version
 - Atomic handoff pattern: "if manifest exists, embeddings are complete"
-- All 5 chunk_and_embed tests still passing
+- Test coverage: 9/9 passing (5 original + 4 CI gate)
 - Deployed to AWS: 2025-11-11T02:48:58Z
 - Manual verification: manifest created for DOC#test-v13
 
-Credit: Implementing ChatGPT-5's final valid enhancement suggestion
+Credit: Implementing ChatGPT-5's enhancement suggestions and CI gate requirements
 
 ---
 
