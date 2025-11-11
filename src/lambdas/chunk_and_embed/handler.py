@@ -3,13 +3,18 @@ Lambda: chunk_and_embed
 Purpose: Chunk text and generate embeddings using Amazon Titan
 Flow: chunk queue → chunk_and_embed → extraction queue
 
-FIXED:
+FIXED (v1.1.0):
 - Actually persists embeddings to S3 (was setting embeddings_stored=True without storing)
 - Removes PII from logs (no full message dumps, no chunk previews)
 - Parameterizes Bedrock region/model via env vars
 - Adds retry/timeout config for Bedrock calls
 - Validates chunk overlap < chunk_size to prevent infinite loops
 - Removes SQS payload bloat (chunk_details with previews)
+
+FIXED (v1.2.0):
+- Production-correct defaults (eu-west-1, Titan V2)
+- NEXT_QUEUE_URL required at module load (fail fast)
+- Idempotency: skips reprocessing if embeddings already exist
 """
 
 import json
@@ -26,8 +31,8 @@ s3 = boto3.client('s3')
 sqs = boto3.client('sqs')
 
 # Allow region/model to be set per-env and add sane retries/timeouts
-BEDROCK_REGION = os.environ.get('BEDROCK_REGION', 'us-east-1')
-EMBED_MODEL_ID = os.environ.get('EMBED_MODEL_ID', 'amazon.titan-embed-text-v1')
+BEDROCK_REGION = os.environ.get('BEDROCK_REGION', 'eu-west-1')  # Production default
+EMBED_MODEL_ID = os.environ.get('EMBED_MODEL_ID', 'amazon.titan-embed-text-v2:0')  # Titan V2 (1024-dim)
 _cfg = Config(
     retries={'max_attempts': 3, 'mode': 'standard'},
     read_timeout=15,
@@ -35,8 +40,8 @@ _cfg = Config(
 )
 bedrock = boto3.client('bedrock-runtime', region_name=BEDROCK_REGION, config=_cfg)
 
-BUCKET_NAME = os.environ.get('BUCKET_NAME')
-NEXT_QUEUE_URL = os.environ.get('NEXT_QUEUE_URL')
+BUCKET_NAME = os.environ['BUCKET_NAME']  # Required
+NEXT_QUEUE_URL = os.environ['NEXT_QUEUE_URL']  # Required - fail fast if missing
 EMBED_S3_PREFIX = os.environ.get('EMBED_S3_PREFIX', 'embeddings/')  # s3://bucket/embeddings/{doc_id}/
 
 # Chunking parameters (tunable via env)
@@ -119,6 +124,26 @@ def lambda_handler(event, context):
 
             logger.info("start chunk+embed doc_id=%s", doc_id)
 
+            # 2a. Idempotency check: skip if embeddings already exist
+            embeddings_prefix = f"{EMBED_S3_PREFIX}{doc_id}/"
+            try:
+                existing = s3.list_objects_v2(Bucket=bucket, Prefix=embeddings_prefix, MaxKeys=1)
+                if existing.get('KeyCount', 0) > 0:
+                    logger.info("idempotent skip: embeddings exist at %s", embeddings_prefix)
+                    # Forward existing state without reprocessing
+                    if 'embeddings_persisted' not in message:
+                        # Count existing embeddings
+                        all_objects = s3.list_objects_v2(Bucket=bucket, Prefix=embeddings_prefix)
+                        message['embeddings_persisted'] = all_objects.get('KeyCount', 0)
+                        message['embeddings_s3_prefix'] = embeddings_prefix
+                        message['chunks_created'] = message.get('chunks_created', all_objects.get('KeyCount', 0))
+                    # Forward to next queue
+                    sqs.send_message(QueueUrl=NEXT_QUEUE_URL, MessageBody=json.dumps(message))
+                    logger.info("forwarded existing state doc_id=%s", doc_id)
+                    continue  # Skip to next record
+            except Exception as e:
+                logger.warning("idempotency check failed: %s (continuing)", str(e))
+
             # 3. Download text from S3
             logger.info("download text s3_key=%s", text_s3_key)
             response = s3.get_object(Bucket=bucket, Key=text_s3_key)
@@ -132,7 +157,7 @@ def lambda_handler(event, context):
             # 5. Generate embeddings for each chunk and persist to S3
             logger.info("generating embeddings...")
             persisted = 0
-            embeddings_prefix = f"{EMBED_S3_PREFIX}{doc_id}/"
+            # embeddings_prefix already defined in idempotency check above
 
             for idx, chunk in enumerate(chunks):
                 logger.info("chunk %s/%s len=%s", idx + 1, len(chunks), len(chunk))
@@ -166,15 +191,12 @@ def lambda_handler(event, context):
             # 7. Log outgoing message (keys only, no PII)
             logger.info("forwarding keys: %s", list(message.keys()))
 
-            # 8. Send to next queue
-            if NEXT_QUEUE_URL:
-                sqs.send_message(
-                    QueueUrl=NEXT_QUEUE_URL,
-                    MessageBody=json.dumps(message)
-                )
-                logger.info("forwarded to next queue")
-            else:
-                logger.error("NEXT_QUEUE_URL not set; message not forwarded")
+            # 8. Send to next queue (NEXT_QUEUE_URL is required at module load)
+            sqs.send_message(
+                QueueUrl=NEXT_QUEUE_URL,
+                MessageBody=json.dumps(message)
+            )
+            logger.info("forwarded to next queue")
 
             logger.info("stage complete doc_id=%s", doc_id)
 

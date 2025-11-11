@@ -2,6 +2,27 @@
 
 All notable changes to the SOW/PO Manager project.
 
+## [1.2.0] - 2025-11-11
+
+### Fixed - Addressing Code Review Feedback
+- **Production-correct defaults** - Changed fallback values from `us-east-1`/`titan-v1` to `eu-west-1`/`titan-v2:0` to match actual deployment
+- **NEXT_QUEUE_URL now required** - Fails fast at module load if missing (was silently logging error)
+- **Idempotency added** - Skips reprocessing if embeddings already exist in S3 (prevents duplicate work on SQS redelivery)
+
+### Changed
+- `BUCKET_NAME` and `NEXT_QUEUE_URL` now use `os.environ['KEY']` instead of `.get()` - raises KeyError immediately if missing
+- Idempotency check uses `list_objects_v2` with `MaxKeys=1` for fast existence check
+- Test suite updated to set required env vars before module import
+
+### Technical Details
+- Idempotency prevents wasted Bedrock API calls on message redelivery
+- Environment variable validation happens at cold start, not request time
+- All 5 chunk_and_embed tests still passing
+
+Credit: Response to external code review (ChatGPT-5) identifying misleading defaults and missing idempotency
+
+---
+
 ## [1.1.0] - 2025-11-11
 
 ### Fixed - Critical Bugs in chunk_and_embed Lambda

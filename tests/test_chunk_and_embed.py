@@ -12,6 +12,10 @@ import boto3
 from botocore.stub import Stubber, ANY
 import botocore.response
 
+# Set required environment variables BEFORE importing handler
+os.environ.setdefault('BUCKET_NAME', 'test-bucket')
+os.environ.setdefault('NEXT_QUEUE_URL', 'https://sqs.us-east-1.amazonaws.com/123456789012/test-queue')
+
 # Add src to path to import Lambda handler
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'lambdas', 'chunk_and_embed'))
 import handler as mod
